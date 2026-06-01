@@ -1,5 +1,4 @@
-# Day 08 – SOC Tier 1 Incident Report: Splunk SIEM Alert Rules & Dashboard
-
+# Splunk SIEM Alert Engineering & Monitoring Dashboard (SOC Tier 1)
 ---
 
 ## Incident Summary
