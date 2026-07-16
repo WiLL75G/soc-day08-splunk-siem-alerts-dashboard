@@ -1,48 +1,31 @@
-# Splunk SIEM Alert Engineering & Monitoring Dashboard (SOC Tier 1)
----
+# Splunk Alert Engineering and SOC Dashboard
 
-## Incident Summary
+Building four real time alerts and a four panel monitoring dashboard on live authentication telemetry from an Ubuntu endpoint, then baselining what normal actually looks like.
 
-- **Incident Type:** SIEM Detection Engineering & Authentication Monitoring
-- **Severity:** Medium (Production-Grade Detection Build)
-- **Detection Method:** Splunk SPL Real-Time Alerts + Live Dashboard Correlation
-- **Tools Used:** Splunk Enterprise, Splunk Universal Forwarder, SPL, Ubuntu Linux, `/var/log/auth.log`
-- **Status:** Operational 4 Alerts Active, 4-Panel Dashboard Deployed (Simulated SOC Environment)
+## At a Glance
 
----
+| Field | Detail |
+| --- | --- |
+| Build Type | SIEM detection engineering and monitoring |
+| Platform | Splunk Enterprise, Splunk Universal Forwarder v10.2.2 |
+| Log Source | /var/log/auth.log, live Ubuntu endpoint |
+| Index and Sourcetype | main, linux_secure |
+| Delivered | 4 real time alerts, 4 panel dashboard |
+| Outcome | Pipeline validated end to end, baseline established, no anomalous access observed |
 
-## Executive Summary
+## What Happened
 
-This investigation focuses on building a production-grade SIEM detection capability using real authentication telemetry from an Ubuntu endpoint. Logs were forwarded into Splunk Enterprise via the Universal Forwarder, and four real-time SPL detection rules were authored to monitor authentication, privilege escalation, root access, and scheduled task execution.
+An Ubuntu endpoint was connected to Splunk via the Universal Forwarder, streaming real authentication logs. Four SPL alerts were written against that feed, and a four panel dashboard was built on top of it.
 
-A four-panel SOC monitoring dashboard was built on top of the live data feed to provide operational visibility, surface anomalous patterns, and support Tier 1 triage workflows.
+The data is not synthetic. That matters, because synthetic data only ever contains the attack you put in it. Live telemetry contains the mess, and learning to read the mess is the job.
 
----
+The finding here is not an attack. It is a baseline. Knowing what normal looks like on this host is the prerequisite for ever calling something abnormal.
 
-## Affected System
-
-- **SIEM Platform:** Splunk Enterprise (Trial) — `localhost:8000`
-- **Forwarder:** Splunk Universal Forwarder v10.2.2
-- **Log Source Endpoint:** Ubuntu Linux VM
-- **Connected Endpoints:** Windows 11, Kali Linux, Ubuntu
-- **Log Sources:**
-  - `/var/log/auth.log` (live authentication telemetry)
-  - Splunk index: `main`
-  - Sourcetype: `linux_secure`
-
----
-
-## Investigation Methodology
-
----
-
-### 1. Log Source Configuration & Ingestion Verification
+## Log Source Configuration
 
 ![Splunk Auth Logs](./screenshots/splunk_auth_logs.png)
 
-- Configured Splunk Universal Forwarder on Ubuntu via `inputs.conf`
-- Enabled real-time monitoring of `/var/log/auth.log`
-- Verified live ingestion using base SPL search
+The forwarder was configured on the Ubuntu host to monitor the auth log in real time.
 
 ```
 [monitor:///var/log/auth.log]
@@ -51,112 +34,63 @@ index = main
 sourcetype = syslog
 ```
 
+Ingestion was verified before any detection work began.
+
 ```spl
 index=main source="/var/log/auth.log"
 ```
 
-### SOC Observations:
+Confirmed live in search: session open and close events, sudo privilege escalation, CRON job execution, and gdm desktop logins. Rules written against an unverified feed are decoration.
 
-- Live session open/close events confirmed in Splunk Search
-- `sudo` privilege escalation events visible in real time
-- CRON job execution events streaming continuously
-- `gdm` desktop login events captured and indexed
+## Alert 1, Session Opened
 
----
-
-## Detection Engineering — Alert Rules
-
----
-
-### 2. Alert 1 — Session Opened Detection
-
-![Alert 1 - Session Opened](./screenshots/alert1_session_opened.png)
+![Alert 1 Session Opened](./screenshots/alert1_session_opened.png)
 
 ```spl
 index=main source="/var/log/auth.log" "session opened"
 ```
 
-- **Alert Type:** Real-time
-- **Trigger:** Number of results > 0
-- **Purpose:** Detect any new authenticated session opened on the endpoint
-- **SOC Use Case:** Login monitoring and access auditing
+Real time, triggers on results greater than zero.
 
-### SOC Observations:
+Detects any new authenticated session on the endpoint. This is the access auditing layer, the raw material for building a user activity timeline.
 
-- Session-open events are the foundational signal for access monitoring
-- Useful for correlating user activity timelines
-- Forms the baseline data layer for anomaly detection
+## Alert 2, Sudo Privilege Escalation
 
----
-
-### 3. Alert 2 — Sudo Privilege Escalation
-
-![Alert 2 - Sudo Escalation](./screenshots/alert2_sudo_escalation.png)
+![Alert 2 Sudo Escalation](./screenshots/alert2_sudo_escalation.png)
 
 ```spl
 index=main source="/var/log/auth.log" "sudo"
 ```
 
-- **Alert Type:** Real-time
-- **Trigger:** Number of results > 0
-- **Purpose:** Detect privilege escalation via `sudo`
-- **SOC Use Case:** Insider threat and lateral movement detection
+Real time, triggers on results greater than zero.
 
-### SOC Observations:
+Detects elevation beyond standard user scope. Sudo is legitimate most of the time, which is precisely why it is worth watching. An attacker who lands as a normal user needs it, and it is the step between having access and being able to use it.
 
-- `sudo` events indicate elevation of privilege beyond standard user scope
-- Critical signal for identifying unauthorized administrative actions
-- Common precursor to system tampering or persistence setup
+## Alert 3, Root Access
 
----
-
-### 4. Alert 3 — Root Access Detection
-
-![Alert 3 - Root Access](./screenshots/alert3_root_access.png)
+![Alert 3 Root Access](./screenshots/alert3_root_access.png)
 
 ```spl
 index=main source="/var/log/auth.log" "user root"
 ```
 
-- **Alert Type:** Real-time
-- **Trigger:** Number of results > 0
-- **Purpose:** Detect any direct root account activity
-- **SOC Use Case:** Critical-severity monitoring — root access is always investigated
+Real time, triggers on results greater than zero.
 
-### SOC Observations:
+Detects direct root account activity. Root gets investigated every time. The question is never whether root did something, it is whether the human behind it was authorised.
 
-- Direct root access is a high-priority security signal
-- Should be cross-referenced against authorized administrator activity
-- Frequent root access from non-administrative users indicates compromise
+## Alert 4, CRON Job Execution
 
----
-
-### 5. Alert 4 — CRON Job Execution Detection
-
-![Alert 4 - CRON Detection](./screenshots/alert4_cron_detection.png)
+![Alert 4 CRON Detection](./screenshots/alert4_cron_detection.png)
 
 ```spl
 index=main source="/var/log/auth.log" "CRON"
 ```
 
-- **Alert Type:** Real-time
-- **Trigger:** Number of results > 0
-- **Purpose:** Detect scheduled job execution
-- **SOC Use Case:** Persistence mechanism detection
+Real time, triggers on results greater than zero.
 
-### SOC Observations:
+Detects scheduled job execution. CRON is one of the most abused persistence mechanisms on Linux because it is built in, it survives reboot, and it looks like housekeeping. An attacker does not need to install anything, they just need a line in a file.
 
-- CRON is one of the most abused persistence mechanisms on Linux
-- Unexpected CRON jobs often indicate attacker-installed scheduled tasks
-- Baseline of expected CRON activity must be established for anomaly detection
-
----
-
-## SOC Monitoring Dashboard
-
----
-
-### 6. Panel 1 — Authentication Events Over Time
+## Dashboard Panel 1, Authentication Events Over Time
 
 ![Dashboard Panel 1](./screenshots/dashboard_panel1.png)
 
@@ -165,19 +99,11 @@ index=main source="/var/log/auth.log"
 | timechart count by host
 ```
 
-- Line chart visualizing authentication activity across a 24-hour window
-- Surfaces volume spikes indicative of brute force or anomalous access patterns
-- Per-host breakdown for multi-endpoint correlation
+Authentication volume across a 24 hour window, broken down per host.
 
-### SOC Observations:
+Volume over time is the fastest anomaly detector there is. Brute force does not look like a bad event, it looks like a spike.
 
-- Time-series visibility is essential for spotting authentication anomalies
-- Sudden volume spikes warrant immediate Tier 1 triage
-- Forms the primary "at-a-glance" SOC view
-
----
-
-### 7. Panel 2 — Top Authentication Services
+## Dashboard Panel 2, Top Authentication Services
 
 ![Dashboard Panel 2](./screenshots/dashboard_panel2.png)
 
@@ -188,19 +114,13 @@ index=main source="/var/log/auth.log"
 | sort -count
 ```
 
-- Bar chart showing services generating the most authentication events
-- **Results:** `cron` (12), `sudo` (6), `polkit-1` (4)
-- Identifies which authentication subsystems are most active
+Which authentication subsystems are generating the load.
 
-### SOC Observations:
+Observed: cron 12, sudo 6, polkit-1 4.
 
-- CRON dominance is consistent with system-level scheduled activity
-- Sudo activity reflects authorized user privilege elevation
-- Polkit events correlate with desktop authorization prompts
+The rex pulls the service name out of the pam_unix string, turning free text into a countable field. CRON dominance is consistent with scheduled system activity. Sudo reflects the lab user. Polkit correlates with desktop authorisation prompts.
 
----
-
-### 8. Panel 3 — Session Activity by User
+## Dashboard Panel 3, Session Activity by User
 
 ![Dashboard Panel 3](./screenshots/dashboard_panel3.png)
 
@@ -211,19 +131,13 @@ index=main source="/var/log/auth.log" "session opened"
 | sort -count
 ```
 
-- Bar chart showing session counts per user
-- **Results:** `root` (13), `gdm` (2), `james` (2)
-- Surfaces top session initiators across the endpoint
+Session counts per user.
 
-### SOC Observations:
+Observed: root 13, gdm 2, james 2.
 
-- Root session dominance is consistent with CRON/system activity
-- Per-user session tracking enables behavioural baselining
-- Anomalous user accounts surface immediately in this view
+Root at 13 looks alarming out of context. Panel 4 explains it.
 
----
-
-### 9. Panel 4 — CRON Job Activity by User
+## Dashboard Panel 4, CRON Activity by User
 
 ![Dashboard Panel 4](./screenshots/dashboard_panel4.png)
 
@@ -234,122 +148,90 @@ index=main source="/var/log/auth.log" "CRON"
 | sort -count
 ```
 
-- Bar chart showing which users are executing scheduled CRON jobs
-- Root account observed as the dominant CRON executor flagged for review
-- Supports persistence detection and scheduled task auditing
+Which users are executing scheduled jobs.
 
-### SOC Observations:
+Root is the dominant CRON executor, which accounts for the root session count in Panel 3. Scheduled maintenance jobs run as root by design. That is the baseline, not the incident.
 
-- Root-only CRON activity is expected for system maintenance jobs
-- Unexpected user accounts running CRON jobs is a persistence indicator
-- This panel directly supports MITRE T1053.003 detection
+The alert this panel really exists for is the inverse. A non root user appearing in this panel has no innocent explanation, and that is what persistence looks like.
 
----
-
-## Final Dashboard Deployment
-
----
-
-### 10. SOC Dashboard - Operational View
+## Dashboard Deployment
 
 ![SOC Dashboard Final 1](./screenshots/soc_dashboard_final_1.png)
 
-- Consolidated 4-panel SOC monitoring dashboard rendered in Splunk
-- All panels driven by live Ubuntu authentication telemetry
-- Real-time refresh enabled for continuous Tier 1 visibility
-
-### SOC Observations:
-
-- Unified dashboard view supports rapid triage decision-making
-- All panels correlate to active alert rules for end-to-end coverage
-- Production-grade SOC visibility achieved using real data
-
----
-
-### 11. SOC Dashboard — Extended View
-
 ![SOC Dashboard Final 2](./screenshots/soc_dashboard_final_2.png)
 
-- Extended dashboard view showing detailed panel layout
-- Confirms operational status of all 4 detection panels
-- Validates dashboard readiness for SOC handoff
+All four panels consolidated into a single view driven by live telemetry, with real time refresh enabled.
 
-### SOC Observations:
+The pipeline is validated end to end, forwarder to index to search to alert to panel. Every panel corresponds to an active alert rule, so what an analyst sees on screen and what fires in the background are the same logic.
 
-- Dashboard is production-ready and recruiter-demonstrable
-- All visualizations support Tier 1 analyst workflows
-- End-to-end detection pipeline validated from forwarder to UI
-
----
-
-## Indicators of Compromise (IOCs) / Behavioural Patterns
+## Behavioural Baseline Observed
 
 | Type | Pattern | Source |
-|------|---------|--------|
-| Persistence Indicator | Continuous CRON execution as `root` | Panel 4 |
-| Privilege Escalation | `sudo` invocations by user `james` | Alert 2 |
-| Root Activity | 13 root sessions observed | Panel 3 |
-| Authentication Volume | CRON-dominant event distribution | Panel 2 |
-| Service Activity | `pam_unix` activity across cron, sudo, polkit-1 | Panel 2 |
+| --- | --- | --- |
+| Scheduled activity | Continuous CRON execution as root | Panel 4 |
+| Privilege escalation | Sudo invocations by user james | Alert 2 |
+| Root sessions | 13 observed, attributable to CRON | Panel 3 |
+| Service distribution | pam_unix across cron, sudo, polkit-1 | Panel 2 |
 
----
+Each of these is expected behaviour on this host. Documented as a baseline, not as indicators of compromise.
 
 ## MITRE ATT&CK Mapping
 
-| Behavior                       | Technique ID | Detection Coverage |
-|--------------------------------|--------------|--------------------|
-| Sudo and Sudo Caching          | T1548.003    | Alert 2            |
-| Scheduled Task/Job: Cron       | T1053.003    | Alert 4 / Panel 4  |
-| Valid Accounts                 | T1078        | Alert 1            |
-| Valid Accounts: Local Accounts | T1078.003    | Alert 3            |
+| Technique | Technique ID | Detection Coverage |
+| --- | --- | --- |
+| Abuse elevation control mechanism, sudo | T1548.003 | Alert 2 |
+| Scheduled task or job, cron | T1053.003 | Alert 4 and Panel 4 |
+| Valid accounts, local accounts | T1078.003 | Alert 1 and Alert 3 |
 
----
+Mapping note: these are the techniques the rules provide coverage for. None were observed. This is a detection build against a clean host.
 
-## SOC Analyst Findings
+## Analyst Findings
 
-- Live Ubuntu authentication telemetry successfully ingested into Splunk
-- Four real-time detection rules deployed and validated against live events
-- CRON job execution running exclusively as root consistent with system activity
-- Sudo privilege escalation events captured and correlated with lab user `james`
-- 13 root sessions observed across the monitoring window driven by scheduled jobs
-- No unauthorized access or anomalous login patterns detected
-- End-to-end detection pipeline validated from log source to dashboard
+Live Ubuntu authentication telemetry ingested and verified in Splunk.
 
----
+Four real time detection rules deployed and confirmed firing against live events.
 
-## SOC Analyst Response
+CRON executing exclusively as root, consistent with system scheduled activity.
 
-- Maintain Universal Forwarder telemetry pipeline for continuous visibility
-- Establish baseline thresholds for CRON, sudo, and root activity volumes
-- Convert real-time alerts into scheduled correlation searches for production scaling
-- Implement alert suppression rules to reduce false-positive volume from expected CRON activity
-- Build user-behavior analytics on top of session and sudo telemetry
-- Cross-reference root activity against authorized administrator accounts
-- Escalate any unexpected CRON entries from non-root users to Tier 2
+Sudo escalation captured and attributable to the lab user james.
 
----
+13 root sessions across the window, explained by scheduled jobs rather than interactive login.
 
-## Analyst Insight
+No unauthorised access or anomalous authentication patterns present.
 
-Effective detection engineering does not require simulated data. By connecting a live Ubuntu endpoint to Splunk via the Universal Forwarder, this lab produced production-grade alert rules and dashboards driven by authentic authentication telemetry. The CRON-running-as-root pattern surfaced immediately and is a recurring persistence signal in real environments analysts who recognize and baseline this behaviour are positioned to detect the abnormal variants that indicate active compromise.
+Pipeline validated from log source through to dashboard.
 
----
+## Honest Assessment of These Rules
 
-## Learning Outcome
+These alerts trigger on any match, which is correct for a lab and wrong for production. Alert 1 would fire on every login. Alert 4 would fire every time CRON runs, which on this host is constantly.
 
-This investigation demonstrates the ability to:
+That is the point of running them on live data first. The baseline in Panel 2 and Panel 4 is what a real threshold gets built from, and rules tuned before you know the normal volume are rules tuned on a guess.
 
-- Configure Splunk Universal Forwarder for real-time Linux log streaming
-- Author SPL detection queries targeting authentication and privilege events
-- Build real-time alert rules in Splunk Enterprise
-- Construct multi-panel SOC monitoring dashboards from live telemetry
-- Apply `rex` field extractions for SPL-driven analytics
-- Identify CRON-based persistence using MITRE ATT&CK methodology
-- Map detection rules to the MITRE ATT&CK framework
-- Operate a Tier 1 SOC dashboard for triage and correlation
-- Validate end-to-end SIEM pipelines from log source to visualization
+## Recommended Next Steps
 
----
+Convert real time alerts to scheduled correlation searches with volume thresholds drawn from the observed baseline.
+
+Suppress expected root CRON activity so the signal is the exception, not the routine.
+
+Alert specifically on non root users appearing in CRON, which is the persistence case Panel 4 exists to catch.
+
+Cross reference root activity against the authorised administrator list.
+
+Build user behaviour baselining on top of the session and sudo telemetry.
+
+## What This Lab Demonstrates
+
+Configuring a Universal Forwarder and validating ingestion before writing a single rule.
+
+Writing SPL with rex field extraction to turn raw log text into countable fields.
+
+Building real time alerts and mapping each one to a technique it covers.
+
+Constructing a dashboard where every panel answers a triage question.
+
+Reading a baseline and explaining an alarming looking number rather than escalating it.
+
+Knowing the difference between a rule that fires and a rule that is tuned.
 
 ## Repository Structure
 
@@ -377,6 +259,5 @@ splunk-siem-alert-rules-dashboard/
 
 ---
 
-## Conclusion
-
-This investigation delivers a fully operational Splunk detection engineering build powered by live endpoint telemetry. Four real-time alert rules monitor authentication patterns on a production Ubuntu endpoint, and a four-panel SOC dashboard provides immediate operational visibility. The end-to-end pipeline from forwarder configuration to dashboard rendering demonstrates production-grade detection capability and Tier 1 SOC readiness.
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-WilliamInCyber-blue?style=flat&logo=linkedin)](https://linkedin.com/in/WilliamInCyber)
+[![X](https://img.shields.io/badge/X-WilliamInCyber-black?style=flat&logo=x)](https://x.com/WilliamInCyber)
