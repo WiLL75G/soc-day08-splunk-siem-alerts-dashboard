@@ -1,6 +1,10 @@
 # Splunk Alert Engineering and SOC Dashboard
 
-Building four real time alerts and a four panel monitoring dashboard on live authentication telemetry from an Ubuntu endpoint, then baselining what normal actually looks like.
+I built four real time monitoring alerts and a four panel Splunk dashboard using live authentication telemetry from an Ubuntu endpoint, then used the resulting activity to establish a behavioural baseline and identify where the rules would need tuning.
+
+![Splunk Detection Engineering Flow](./screenshots/00_architecture.png)
+
+The project follows the telemetry from the Ubuntu endpoint into Splunk, through monitoring rules and dashboard analytics, and finally into baseline analysis and tuning decisions.
 
 ## At a Glance
 
@@ -8,39 +12,43 @@ Building four real time alerts and a four panel monitoring dashboard on live aut
 | --- | --- |
 | Build Type | SIEM detection engineering and monitoring |
 | Platform | Splunk Enterprise, Splunk Universal Forwarder v10.2.2 |
-| Log Source | /var/log/auth.log, live Ubuntu endpoint |
-| Index and Sourcetype | main, linux_secure |
+| Log Source | `/var/log/auth.log`, live Ubuntu endpoint |
+| Index and Sourcetype | `main`, `syslog` |
 | Delivered | 4 real time alerts, 4 panel dashboard |
-| Outcome | Pipeline validated end to end, baseline established, no anomalous access observed |
+| Outcome | Pipeline validated end to end, baseline established, no obvious anomalous pattern identified in the dashboard evidence reviewed |
 
 ## What Happened
 
-An Ubuntu endpoint was connected to Splunk via the Universal Forwarder, streaming real authentication logs. Four SPL alerts were written against that feed, and a four panel dashboard was built on top of it.
+An Ubuntu endpoint was connected to Splunk through the Universal Forwarder, streaming real authentication logs.
 
-The data is not synthetic. That matters, because synthetic data only ever contains the attack you put in it. Live telemetry contains the mess, and learning to read the mess is the job.
+I verified ingestion before building the monitoring logic. I then created four broad SPL alerts and four dashboard panels to examine session activity, sudo activity, root activity, CRON execution, authentication services, and user behaviour.
 
-The finding here is not an attack. It is a baseline. Knowing what normal looks like on this host is the prerequisite for ever calling something abnormal.
+The purpose was not to manufacture an attack.
+
+The purpose was to understand what normal authentication activity looked like on this host before deciding what should be considered abnormal.
 
 ## Log Source Configuration
 
 ![Splunk Auth Logs](./screenshots/splunk_auth_logs.png)
 
-The forwarder was configured on the Ubuntu host to monitor the auth log in real time.
+The Ubuntu host was configured to send `/var/log/auth.log` into Splunk.
 
-```
+```text
 [monitor:///var/log/auth.log]
 disabled = false
 index = main
 sourcetype = syslog
 ```
 
-Ingestion was verified before any detection work began.
+I verified ingestion before writing the monitoring searches.
 
 ```spl
 index=main source="/var/log/auth.log"
 ```
 
-Confirmed live in search: session open and close events, sudo privilege escalation, CRON job execution, and gdm desktop logins. Rules written against an unverified feed are decoration.
+The reviewed telemetry included session activity, sudo activity, CRON execution, and desktop authentication events.
+
+This established that the data source was available before detection logic was built on top of it.
 
 ## Alert 1, Session Opened
 
@@ -50,9 +58,13 @@ Confirmed live in search: session open and close events, sudo privilege escalati
 index=main source="/var/log/auth.log" "session opened"
 ```
 
-Real time, triggers on results greater than zero.
+The alert runs in real time and triggers when the search returns more than zero results.
 
-Detects any new authenticated session on the endpoint. This is the access auditing layer, the raw material for building a user activity timeline.
+It matches authentication log events containing `session opened`.
+
+This provides visibility into PAM session activity that can later be correlated by user and service when building an activity timeline.
+
+The query is intentionally broad. A session opening is not automatically suspicious.
 
 ## Alert 2, Sudo Privilege Escalation
 
@@ -62,11 +74,15 @@ Detects any new authenticated session on the endpoint. This is the access auditi
 index=main source="/var/log/auth.log" "sudo"
 ```
 
-Real time, triggers on results greater than zero.
+The alert runs in real time and triggers when the search returns more than zero results.
 
-Detects elevation beyond standard user scope. Sudo is legitimate most of the time, which is precisely why it is worth watching. An attacker who lands as a normal user needs it, and it is the step between having access and being able to use it.
+It monitors sudo related authentication activity that may require investigation when reviewing privileged actions.
 
-## Alert 3, Root Access
+Sudo activity is common on a Linux system, so the presence of a sudo event alone does not establish malicious privilege escalation.
+
+The user, timing, command, and surrounding activity provide the context needed to determine whether the action is expected.
+
+## Alert 3, Root Account Activity
 
 ![Alert 3 Root Access](./screenshots/alert3_root_access.png)
 
@@ -74,9 +90,15 @@ Detects elevation beyond standard user scope. Sudo is legitimate most of the tim
 index=main source="/var/log/auth.log" "user root"
 ```
 
-Real time, triggers on results greater than zero.
+The alert runs in real time and triggers when the search returns more than zero results.
 
-Detects direct root account activity. Root gets investigated every time. The question is never whether root did something, it is whether the human behind it was authorised.
+It monitors authentication events referencing the root account.
+
+The query does not distinguish an interactive root login from scheduled activity attributed to root.
+
+Service and session context must therefore be examined before deciding whether the activity is expected or requires investigation.
+
+This distinction became important later when the dashboard showed a high number of root sessions.
 
 ## Alert 4, CRON Job Execution
 
@@ -86,9 +108,27 @@ Detects direct root account activity. Root gets investigated every time. The que
 index=main source="/var/log/auth.log" "CRON"
 ```
 
-Real time, triggers on results greater than zero.
+The alert runs in real time and triggers when the search returns more than zero results.
 
-Detects scheduled job execution. CRON is one of the most abused persistence mechanisms on Linux because it is built in, it survives reboot, and it looks like housekeeping. An attacker does not need to install anything, they just need a line in a file.
+It monitors CRON related authentication activity.
+
+CRON can be relevant during persistence investigations, but a CRON event does not establish persistence by itself.
+
+Unexpected users, timing, jobs, or changes would require additional investigation against the host baseline.
+
+## Alert Trigger History
+
+I checked the trigger history of the four alerts rather than assuming that a working search meant every alert had fired.
+
+Alert 1, Session Opened, showed multiple fires in its Splunk trigger history.
+
+Alerts 2, 3, and 4 showed no fired events in the reviewed screenshots.
+
+The underlying activity monitored by those searches was visible elsewhere in the telemetry. Sudo and CRON activity, for example, appeared in the dashboard and raw log review.
+
+That means there is an important distinction between the search logic matching existing data and the configured alert actually recording a new trigger after it was enabled.
+
+A working search is not automatically evidence that an alert has fired.
 
 ## Dashboard Panel 1, Authentication Events Over Time
 
@@ -99,9 +139,11 @@ index=main source="/var/log/auth.log"
 | timechart count by host
 ```
 
-Authentication volume across a 24 hour window, broken down per host.
+This panel shows authentication event volume over time.
 
-Volume over time is the fastest anomaly detector there is. Brute force does not look like a bad event, it looks like a spike.
+A sudden change in volume can provide an investigation lead.
+
+However, volume alone does not establish brute force activity. A spike would need to be correlated with the underlying authentication events, accounts, sources, and timing before reaching that conclusion.
 
 ## Dashboard Panel 2, Top Authentication Services
 
@@ -114,11 +156,21 @@ index=main source="/var/log/auth.log"
 | sort -count
 ```
 
-Which authentication subsystems are generating the load.
+This panel extracts the PAM service from the raw log text and turns it into a countable field.
 
-Observed: cron 12, sudo 6, polkit-1 4.
+Observed activity included:
 
-The rex pulls the service name out of the pam_unix string, turning free text into a countable field. CRON dominance is consistent with scheduled system activity. Sudo reflects the lab user. Polkit correlates with desktop authorisation prompts.
+```text
+cron       12
+sudo        6
+polkit-1    4
+```
+
+CRON generated the largest count in the reviewed evidence.
+
+Sudo activity was also present, while `polkit-1` appeared in desktop authorisation activity.
+
+The panel provides service context that cannot be obtained from total authentication volume alone.
 
 ## Dashboard Panel 3, Session Activity by User
 
@@ -131,11 +183,21 @@ index=main source="/var/log/auth.log" "session opened"
 | sort -count
 ```
 
-Session counts per user.
+This panel groups session opening events by username.
 
-Observed: root 13, gdm 2, james 2.
+Observed:
 
-Root at 13 looks alarming out of context. Panel 4 explains it.
+```text
+root     13
+gdm       2
+james     2
+```
+
+The root account immediately stood out with 13 session events.
+
+That number could look suspicious when viewed by itself.
+
+The next panel provided the context needed to interpret it.
 
 ## Dashboard Panel 4, CRON Activity by User
 
@@ -148,11 +210,13 @@ index=main source="/var/log/auth.log" "CRON"
 | sort -count
 ```
 
-Which users are executing scheduled jobs.
+This panel identifies which users appear in the reviewed CRON activity.
 
-Root is the dominant CRON executor, which accounts for the root session count in Panel 3. Scheduled maintenance jobs run as root by design. That is the baseline, not the incident.
+Root was the dominant CRON user.
 
-The alert this panel really exists for is the inverse. A non root user appearing in this panel has no innocent explanation, and that is what persistence looks like.
+That provided context for the elevated root session count seen in Panel 3 and supported interpreting the observed activity as scheduled system behaviour rather than treating the count alone as an incident.
+
+A new or unexpected user appearing in CRON activity would require investigation against the established host baseline and authorised scheduled jobs.
 
 ## Dashboard Deployment
 
@@ -160,90 +224,165 @@ The alert this panel really exists for is the inverse. A non root user appearing
 
 ![SOC Dashboard Final 2](./screenshots/soc_dashboard_final_2.png)
 
-All four panels consolidated into a single view driven by live telemetry, with real time refresh enabled.
+The four panels were consolidated into a single monitoring view using the same Ubuntu authentication telemetry.
 
-The pipeline is validated end to end, forwarder to index to search to alert to panel. Every panel corresponds to an active alert rule, so what an analyst sees on screen and what fires in the background are the same logic.
+The dashboard adds aggregation and field extraction to provide context around the activity monitored by the alerts.
+
+The dashboard panels and alert searches are related through the same telemetry, but they are not all identical searches.
+
+The documented pipeline is:
+
+```text
+Ubuntu authentication activity
+        ↓
+Universal Forwarder
+        ↓
+Splunk index
+        ↓
+SPL monitoring searches
+        ↓
+Dashboard analysis
+        ↓
+Baseline and tuning decisions
+```
 
 ## Behavioural Baseline Observed
 
-| Type | Pattern | Source |
+| Type | Pattern | Evidence |
 | --- | --- | --- |
-| Scheduled activity | Continuous CRON execution as root | Panel 4 |
-| Privilege escalation | Sudo invocations by user james | Alert 2 |
-| Root sessions | 13 observed, attributable to CRON | Panel 3 |
-| Service distribution | pam_unix across cron, sudo, polkit-1 | Panel 2 |
+| Scheduled activity | CRON execution associated with root | Panel 4 |
+| Privileged activity | Sudo events associated with user `james` | Alert and dashboard telemetry |
+| Root sessions | 13 session events observed with CRON providing important context | Panels 3 and 4 |
+| Service distribution | `pam_unix` activity across cron, sudo, and polkit-1 | Panel 2 |
 
-Each of these is expected behaviour on this host. Documented as a baseline, not as indicators of compromise.
+These patterns form part of the observed baseline for this host.
 
-## MITRE ATT&CK Mapping
+They should not be treated as indicators of compromise simply because they match broad monitoring searches.
 
-| Technique | Technique ID | Detection Coverage |
-| --- | --- | --- |
-| Abuse elevation control mechanism, sudo | T1548.003 | Alert 2 |
-| Scheduled task or job, cron | T1053.003 | Alert 4 and Panel 4 |
-| Valid accounts, local accounts | T1078.003 | Alert 1 and Alert 3 |
+## MITRE ATT&CK Context
 
-Mapping note: these are the techniques the rules provide coverage for. None were observed. This is a detection build against a clean host.
+No adversary technique was confirmed in this project.
+
+Two monitoring areas relate to ATT&CK behaviours that this telemetry could help investigate.
+
+| Monitoring Area | ATT&CK Context |
+| --- | --- |
+| Sudo activity | T1548.003, Abuse Elevation Control Mechanism: Sudo and Sudo Caching |
+| CRON activity | T1053.003, Scheduled Task or Job: Cron |
+
+These mappings describe potential investigation context, not confirmed adversary activity or production detection coverage.
+
+The current searches are broad string matches.
+
+They would require additional filtering, thresholds, correlation, and validation before being treated as production detection logic.
+
+Alert 1 and Alert 3 are intentionally not mapped to an ATT&CK technique because broad `session opened` and `user root` matches do not establish meaningful coverage for a specific adversary behaviour.
 
 ## Analyst Findings
 
-Live Ubuntu authentication telemetry ingested and verified in Splunk.
+Live Ubuntu authentication telemetry was successfully ingested and reviewed in Splunk.
 
-Four real time detection rules deployed and confirmed firing against live events.
+Four real time monitoring alerts were configured against that telemetry.
 
-CRON executing exclusively as root, consistent with system scheduled activity.
+Alert 1 had confirmed trigger history in the reviewed evidence.
 
-Sudo escalation captured and attributable to the lab user james.
+Alerts 2, 3, and 4 had no recorded fires in their reviewed trigger history screenshots, even though activity relevant to some of their underlying searches appeared elsewhere in the telemetry.
 
-13 root sessions across the window, explained by scheduled jobs rather than interactive login.
+The dashboard showed CRON, sudo, root, desktop, and user session activity.
 
-No unauthorised access or anomalous authentication patterns present.
+The root session count initially stood out, but CRON activity provided important context for interpreting it as part of the observed baseline.
 
-Pipeline validated from log source through to dashboard.
+No obvious anomalous authentication pattern was identified in the dashboard evidence reviewed.
+
+## Analyst Conclusion
+
+This project established a working monitoring pipeline from an Ubuntu authentication log into Splunk searches, alerts, and dashboard analytics.
+
+The most important result was not an attack detection.
+
+It was establishing enough context to understand why activity that initially looked unusual could be expected on this host.
+
+The project also showed that deploying an alert, confirming its search logic, and confirming that the alert itself has fired are three different things.
+
+**Verdict:** Live authentication telemetry successfully monitored in Splunk, behavioural baseline established, and broad alert logic identified for further tuning.
 
 ## Honest Assessment of These Rules
 
-These alerts trigger on any match, which is correct for a lab and wrong for production. Alert 1 would fire on every login. Alert 4 would fire every time CRON runs, which on this host is constantly.
+The four alerts are intentionally broad.
 
-That is the point of running them on live data first. The baseline in Panel 2 and Panel 4 is what a real threshold gets built from, and rules tuned before you know the normal volume are rules tuned on a guess.
+They trigger whenever their searches return a match.
+
+That is useful for learning how the telemetry behaves, but it would create unnecessary alert volume in a production environment.
+
+For example, routine CRON execution should not continuously create analyst work simply because it contains the string `CRON`.
+
+The observed baseline provides the information needed to begin replacing broad matches with more meaningful conditions.
+
+## Lessons Learned
+
+An alert that has been created is not the same as an alert that has been confirmed firing.
+
+Three of the four alerts had no recorded fires in the reviewed trigger history screenshots, even though activity relevant to their searches appeared elsewhere in the telemetry.
+
+Checking the trigger history directly prevented me from claiming more than the evidence supported.
+
+The baseline analysis reinforced another lesson.
+
+The 13 root session events looked important in isolation.
+
+Only after comparing them with CRON activity did the number gain useful context.
+
+A count needs context before it can be called normal or abnormal.
+
+## What I Would Improve
+
+I would let the alerts run longer so each rule could build a genuine trigger history before documenting its behaviour.
+
+I would then convert the broad real time alerts into scheduled correlation searches with conditions based on the observed baseline.
+
+Expected root CRON activity could be filtered or suppressed so that unusual activity becomes easier to identify.
+
+I would also investigate new or unexpected CRON users against authorised scheduled jobs rather than assuming that every non root CRON event represents persistence.
+
+Finally, I would commit the SPL searches as separate files in the repository so the detection logic can be reviewed independently of the README.
 
 ## Recommended Next Steps
 
-Convert real time alerts to scheduled correlation searches with volume thresholds drawn from the observed baseline.
+Use the observed baseline to design more specific alert conditions.
 
-Suppress expected root CRON activity so the signal is the exception, not the routine.
+Convert broad real time searches into scheduled correlation searches where appropriate.
 
-Alert specifically on non root users appearing in CRON, which is the persistence case Panel 4 exists to catch.
+Tune expected CRON and sudo activity to reduce unnecessary alert volume.
 
-Cross reference root activity against the authorised administrator list.
+Correlate root activity with service, session type, and authorised administrator context.
 
-Build user behaviour baselining on top of the session and sudo telemetry.
+Expand user behaviour baselining using the session and sudo telemetry.
+
+Commit each SPL search as a separate repository artifact.
 
 ## What This Lab Demonstrates
 
-Configuring a Universal Forwarder and validating ingestion before writing a single rule.
+This project demonstrates:
 
-Writing SPL with rex field extraction to turn raw log text into countable fields.
-
-Building real time alerts and mapping each one to a technique it covers.
-
-Constructing a dashboard where every panel answers a triage question.
-
-Reading a baseline and explaining an alarming looking number rather than escalating it.
-
-Knowing the difference between a rule that fires and a rule that is tuned.
+* Configuring Splunk ingestion for live Ubuntu authentication telemetry.
+* Verifying telemetry before building monitoring logic.
+* Writing SPL searches against raw Linux authentication events.
+* Using `rex` to extract fields from unstructured log text.
+* Creating real time monitoring alerts.
+* Checking alert trigger history rather than assuming a search has fired.
+* Building dashboard panels that answer specific investigation questions.
+* Establishing a behavioural baseline from live system activity.
+* Correlating root session activity with CRON context.
+* Distinguishing broad monitoring logic from tuned detection logic.
+* Scoping MITRE ATT&CK mappings to what the telemetry actually supports.
 
 ## Repository Structure
 
-```
-splunk-siem-alert-rules-dashboard/
+```text
+.
 ├── README.md
-├── spl-queries/
-│   ├── alert1_session_opened.spl
-│   ├── alert2_sudo_escalation.spl
-│   ├── alert3_root_access.spl
-│   └── alert4_cron_detection.spl
 └── screenshots/
+    ├── 00_architecture.png
     ├── splunk_auth_logs.png
     ├── alert1_session_opened.png
     ├── alert2_sudo_escalation.png
@@ -259,5 +398,10 @@ splunk-siem-alert-rules-dashboard/
 
 ---
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-WilliamInCyber-blue?style=flat&logo=linkedin)](https://linkedin.com/in/WilliamInCyber)
-[![X](https://img.shields.io/badge/X-WilliamInCyber-black?style=flat&logo=x)](https://x.com/WilliamInCyber)
+## Author
+
+William Gokah
+
+SOC Analyst Portfolio
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-WilliamInCyber-blue?style=flat&logo=linkedin)](https://linkedin.com/in/WilliamInCyber) [![X](https://img.shields.io/badge/X-WilliamInCyber-black?style=flat&logo=x)](https://x.com/WilliamInCyber)
